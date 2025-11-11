@@ -27,8 +27,13 @@ class FineTunedDINOv2Extractor:
         self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', force_reload=False)
         # Load trọng số đã fine-tune của chúng ta
         self.model.load_state_dict(torch.load(model_path))
-        
-        self.model.to('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # --- SỬA Ở ĐÂY ---
+        # Tự lưu lại thông tin device
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.model.to(self.device)
+        # --- KẾT THÚC SỬA ---
+
         self.model.eval()
         print("Tải model FINE-TUNED thành công!")
 
@@ -43,7 +48,7 @@ class FineTunedDINOv2Extractor:
         # Logic extract y hệt phiên bản gốc
         if image_bgr is None or image_bgr.size == 0: return None
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        image_tensor = self.transform(image_rgb).unsqueeze(0).to(self.model.device)
+        image_tensor = self.transform(image_rgb).unsqueeze(0).to(self.device)
         features = self.model(image_tensor)
         return torch.nn.functional.normalize(features, p=2, dim=1)
 
@@ -63,7 +68,7 @@ def load_ground_truth(video_ids):
 
 def main():
     print("Bắt đầu quy trình Validation cho model FINE-TUNED...")
-    
+
     if not FINETUNED_MODEL_PATH.exists():
         print(f"LỖI: Không tìm thấy model fine-tuned tại {FINETUNED_MODEL_PATH}")
         print("Vui lòng chạy script finetune.py trước.")
@@ -73,7 +78,7 @@ def main():
     detector = YOLO('yolo11m.pt')
     # --- SỬ DỤNG EXTRACTOR MỚI ---
     extractor = FineTunedDINOv2Extractor(FINETUNED_MODEL_PATH)
-    
+
     # 2. Chia dữ liệu
     all_video_dirs = [d for d in (DATA_DIR / "samples").iterdir() if d.is_dir()]
     all_video_ids = sorted([d.name for d in all_video_dirs])
@@ -87,7 +92,7 @@ def main():
     # 4. Vòng lặp tìm ngưỡng tối ưu
     best_threshold = 0
     best_map = -1
-    
+
     # Với model fine-tuned, đặc trưng sẽ rõ ràng hơn.
     # Chúng ta có thể tìm kiếm ở một khoảng ngưỡng cao hơn và chi tiết hơn.
     search_range = np.arange(0.95, 0.79, -0.01)
@@ -96,7 +101,7 @@ def main():
     for threshold in search_range:
         threshold = round(threshold, 2)
         print(f"\n--- Thử nghiệm với ngưỡng: {threshold} ---")
-        
+
         metric = MeanAveragePrecision(box_format='xyxy')
         all_preds, all_targets = [], []
 
@@ -107,7 +112,7 @@ def main():
             ref_img_dir = sample_dir / "object_images"
             pred_bboxes = process_video(video_path, ref_img_dir, detector, extractor, similarity_threshold=threshold)
             gt_bboxes_with_frame = gt_data.get(video_id, np.array([]))
-            
+
             num_frames = int(cv2.VideoCapture(str(video_path)).get(cv2.CAP_PROP_FRAME_COUNT))
             for frame_idx in range(num_frames):
                 preds_on_frame = [p for p in pred_bboxes if p["frame"] == frame_idx]
@@ -126,7 +131,7 @@ def main():
         results = metric.compute()
         map_score = results['map'].item()
         print(f"Kết quả với ngưỡng {threshold}: mAP = {map_score:.4f}")
-        
+
         if map_score > best_map:
             best_map = map_score
             best_threshold = threshold
@@ -138,3 +143,4 @@ def main():
 if __name__ == "__main__":
     import torchvision.transforms as T
     main()
+
